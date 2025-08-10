@@ -1,4 +1,4 @@
-# Usa Python slim e instala o que vamos precisar
+# Base Python
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,26 +12,29 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     RCLONE_BASEDIR=Videos \
     VIDEO_OUTPUT_DIR=/app/output/videos
 
-# deps de sistema: unzip p/ extrair o ZIP, rclone/ffmpeg p/ subir p/ Drive e render futuro
+# deps de sistema: unzip (pra extrair o ZIP), rclone/ffmpeg (upload e render futuro)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    unzip rclone ffmpeg tzdata && \
+    unzip rclone ffmpeg tzdata ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copia TODO o repo (inclui seu ZIP)
+# Copia TODO o repo (inclui o ZIP que você subiu)
 WORKDIR /srcrepo
 COPY . .
 
-# Descompacta o ZIP p/ /app
-RUN mkdir -p /app && \
-    ZIP=$(ls /srcrepo/video_automation_project_*.zip | head -n1) && \
-    unzip -o "$ZIP" -d /app && \
-    mkdir -p /app/output/videos /app/database && \
+# Descompacta o ZIP para /app e prepara pastas
+RUN set -eux; \
+    mkdir -p /app; \
+    ZIPFILE="$(ls /srcrepo/*.zip | head -n1)"; \
+    unzip -o "$ZIPFILE" -d /app; \
+    mkdir -p /app/output/videos /app/database; \
+    # garante permissão de execução do entrypoint
     chmod +x /app/entrypoint.sh || true
 
+# Instala dependências do projeto (que vieram no ZIP)
 WORKDIR /app
-
-# Instala as dependências do projeto (estão dentro do ZIP)
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
-CMD ["/app/entrypoint.sh"]
+
+# Chama o entrypoint via bash (evita "exec format error")
+ENTRYPOINT ["bash", "/app/entrypoint.sh"]
