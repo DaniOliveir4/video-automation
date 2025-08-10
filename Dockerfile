@@ -1,65 +1,40 @@
-import os
-import sys
-from flask import Flask, jsonify
+# Base Python
+FROM python:3.11-slim
 
-# DON'T CHANGE THIS !!!
-# garante que o pacote "src" seja encontrado
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000 \
+    HOST=0.0.0.0 \
+    TZ=America/Sao_Paulo \
+    DRIVE_UPLOAD_ENABLED=false \
+    DRIVE_PROVIDER=rclone \
+    RCLONE_REMOTE=gdrive \
+    RCLONE_BASEDIR=Videos \
+    VIDEO_OUTPUT_DIR=/app/output/videos
 
-# .env (opcional)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+# deps de sistema: unzip (pra extrair o ZIP), rclone/ffmpeg (upload e render futuro)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    unzip rclone ffmpeg tzdata ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# App
-app = Flask(__name__)
+# Copia TODO o repo (inclui o ZIP que você subiu)
+WORKDIR /srcrepo
+COPY . .
 
-# Config
-from src.config import Config as _Config
-config = _Config()
-app.config.from_object(config)
+# Descompacta o ZIP para /app e prepara pastas
+RUN set -eux; \
+    mkdir -p /app; \
+    ZIPFILE="$(ls /srcrepo/*.zip | head -n1)"; \
+    unzip -o "$ZIPFILE" -d /app; \
+    mkdir -p /app/output/videos /app/database; \
+    # garante permissão de execução do entrypoint
+    chmod +x /app/entrypoint.sh || true
 
-# Extensões
-from src.extensions.db import db
-from src.extensions.cors import init_cors
-init_cors(app, origins=app.config.get("CORS_ORIGINS", "*"))
-db.init_app(app)
+# Instala dependências do projeto (que vieram no ZIP)
+WORKDIR /app
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Blueprints
-from src.blueprints.auth import auth_bp
-from src.blueprints.content import content_bp
-from src.blueprints.download import download_bp
-from src.blueprints.system import system_bp
-from src.blueprints.generate import generate_bp
-from src.blueprints.upload import upload_bp
+EXPOSE 8000
 
-app.register_blueprint(auth_bp, url_prefix="/api")
-app.register_blueprint(content_bp, url_prefix="/api")
-app.register_blueprint(download_bp, url_prefix="/api")
-app.register_blueprint(system_bp, url_prefix="/api")
-app.register_blueprint(generate_bp, url_prefix="/api")
-app.register_blueprint(upload_bp, url_prefix="/api")
-
-# DB (cria tabelas se ainda não existirem)
-with app.app_context():
-    from src import models  # registra modelos
-    db.create_all()
-
-# Healthcheck
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"}), 200
-
-if __name__ == "__main__":
-    # Scheduler (não bloqueia)
-    try:
-        from src.services.scheduler.automation_scheduler import start_scheduler
-        start_scheduler()
-        print("✅ Scheduler started")
-    except Exception as e:
-        print(f"⚠️ Scheduler not started: {e}")
-
-    print(f"🚀 Starting server on {config.HOST}:{config.PORT} (debug={config.DEBUG})")
-    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+# Chama o entrypoint via bash (evita "exec format error")
+ENTRYPOINT ["bash", "/app/entrypoint.sh"]
